@@ -32,41 +32,72 @@ from enum import Enum
 import aiohttp
 from bs4 import BeautifulSoup
 import traceback
+import threading
 
 # ============================================
-# CONFIGURATION
+# FLASK WEB SERVER FOR RENDER
+# ============================================
+
+from flask import Flask, jsonify
+
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return {
+        "status": "online",
+        "bot": "ApyKart Ultimate Bot v9.0",
+        "uptime": datetime.now().isoformat(),
+        "message": "Bot is running successfully!"
+    }
+
+@flask_app.route('/health')
+def health():
+    return jsonify({"status": "healthy"})
+
+def run_web_server():
+    """Run Flask web server in a separate thread"""
+    port = int(os.environ.get("PORT", 10000))
+    flask_app.run(host='0.0.0.0', port=port, debug=False)
+
+# Start web server in background thread
+web_thread = threading.Thread(target=run_web_server, daemon=True)
+web_thread.start()
+
+# ============================================
+# CONFIGURATION (Using Environment Variables)
 # ============================================
 
 @dataclass
 class Config:
-    # Telegram API Credentials
-    api_id: int = 39028284
-    api_hash: str = "118a1ab2ca7e9c9b3b3e70cc4a72d70a"
-    bot_token: str = "8707772379:AAFbQyKNbcDql-cPqEj0wxGs_ZkZsJIo2tw"
+    # Telegram API Credentials - Now from Environment Variables
+    api_id: int = int(os.environ.get("API_ID", 0))  # MUST set in Render
+    api_hash: str = os.environ.get("API_HASH", "")
+    bot_token: str = os.environ.get("BOT_TOKEN", "")
     
     # ApyKart Links
-    website: str = "https://apykart.vercel.app"
-    api_url: str = "https://apykart.vercel.app/api/products"
-    products_page: str = "https://apykart.vercel.app/products"
-    app_link: str = "https://apykart.vercel.app/download"
-    seller_link: str = "https://apykart.vercel.app/seller"
+    website: str = os.environ.get("WEBSITE", "https://apykart.vercel.app")
+    api_url: str = os.environ.get("API_URL", "https://apykart.vercel.app/api/products")
+    products_page: str = os.environ.get("PRODUCTS_PAGE", "https://apykart.vercel.app/products")
+    app_link: str = os.environ.get("APP_LINK", "https://apykart.vercel.app/download")
+    seller_link: str = os.environ.get("SELLER_LINK", "https://apykart.vercel.app/seller")
     
     # Bot Settings
-    message_gap_seconds: int = 90
-    search_gap_seconds: int = 30
-    cycle_hours: int = 3
-    max_groups_per_search: int = 30
-    max_products_per_cycle: int = 10
+    message_gap_seconds: int = int(os.environ.get("MESSAGE_GAP", 60))  # Reduced for faster testing
+    search_gap_seconds: int = int(os.environ.get("SEARCH_GAP", 10))   # Reduced for faster testing
+    cycle_hours: int = int(os.environ.get("CYCLE_HOURS", 3))
+    max_groups_per_search: int = int(os.environ.get("MAX_GROUPS", 20))
+    max_products_per_cycle: int = int(os.environ.get("MAX_PRODUCTS", 5))
     
     # Auto Discovery Settings
     auto_discover_keywords: bool = True
-    keywords_update_interval: int = 6  # hours
+    keywords_update_interval: int = 6
     max_keywords: int = 100
     
     # Features
     enable_marketing: bool = True
-    enable_auto_restart: bool = True
-    enable_background_service: bool = True
+    enable_auto_restart: bool = False  # Disabled for Render
+    enable_background_service: bool = False  # Disabled for Render
     
     # Database
     db_path: str = "apykart_v9.db"
@@ -74,10 +105,16 @@ class Config:
     
     # Auto Restart
     auto_restart_hours: int = 24
+    
+    def __post_init__(self):
+        # Validate required config
+        if self.api_id == 0 or not self.api_hash or not self.bot_token:
+            print("⚠️ WARNING: API_ID, API_HASH, or BOT_TOKEN not set in environment variables")
+            print("Bot will not function properly!")
 
 
 # ============================================
-# BASE SEARCH KEYWORDS (Starting point)
+# BASE SEARCH KEYWORDS
 # ============================================
 
 BASE_SEARCH_QUERIES = [
@@ -87,7 +124,7 @@ BASE_SEARCH_QUERIES = [
     "tech shopping india", "gadget deals india", "electronics shopping",
     "deal of the day", "coupon offers india", "flipkart amazon deals",
     "best deals india", "sale alert india", "discount offers india",
-    "doston ke saath", "free shopping deals", "cashback offers",
+    "free shopping deals", "cashback offers",
     "product review india", "shopping community india", "new products india",
 ]
 
@@ -181,7 +218,7 @@ MESSAGE_TEMPLATES = [
 
 
 # ============================================
-# DATABASE MANAGER (Enhanced)
+# DATABASE MANAGER (Keep all original methods)
 # ============================================
 
 class DatabaseManager:
@@ -197,7 +234,6 @@ class DatabaseManager:
         self.cursor = self.conn.cursor()
     
     def _create_tables(self):
-        # Groups table
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS sent_groups (
                 group_id TEXT PRIMARY KEY,
@@ -207,7 +243,6 @@ class DatabaseManager:
             )
         ''')
         
-        # Products table
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS sent_products (
                 product_id TEXT PRIMARY KEY,
@@ -218,7 +253,6 @@ class DatabaseManager:
             )
         ''')
         
-        # Keywords table (for auto discovery)
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS keywords (
                 keyword TEXT PRIMARY KEY,
@@ -230,7 +264,6 @@ class DatabaseManager:
             )
         ''')
         
-        # Users table
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -243,7 +276,6 @@ class DatabaseManager:
             )
         ''')
         
-        # Referrals table
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS referrals (
                 user_id INTEGER PRIMARY KEY,
@@ -252,7 +284,6 @@ class DatabaseManager:
             )
         ''')
         
-        # Statistics table
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS bot_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -267,7 +298,7 @@ class DatabaseManager:
         
         self.conn.commit()
     
-    # ========== Group Methods ==========
+    # Group Methods
     def is_group_sent(self, group_id: str) -> bool:
         self.cursor.execute("SELECT 1 FROM sent_groups WHERE group_id = ?", (group_id,))
         return self.cursor.fetchone() is not None
@@ -283,7 +314,7 @@ class DatabaseManager:
         self.cursor.execute("SELECT COUNT(*) FROM sent_groups")
         return self.cursor.fetchone()[0]
     
-    # ========== Product Methods ==========
+    # Product Methods
     def is_product_sent(self, product_link: str) -> bool:
         self.cursor.execute("SELECT 1 FROM sent_products WHERE product_link = ?", (product_link,))
         return self.cursor.fetchone() is not None
@@ -300,7 +331,7 @@ class DatabaseManager:
         self.cursor.execute("SELECT COUNT(*) FROM sent_products")
         return self.cursor.fetchone()[0]
     
-    # ========== Keyword Methods (Auto Discovery) ==========
+    # Keyword Methods
     def add_keyword(self, keyword: str, source: str = "discovery"):
         self.cursor.execute(
             "INSERT OR IGNORE INTO keywords (keyword, source) VALUES (?, ?)",
@@ -340,14 +371,13 @@ class DatabaseManager:
         self.conn.commit()
     
     def get_all_active_keywords(self, limit: int = 50) -> List[str]:
-        """Get keywords that haven't been used recently"""
         self.cursor.execute(
             "SELECT keyword FROM keywords WHERE last_used IS NULL OR last_used < datetime('now', '-7 days') ORDER BY success_count DESC LIMIT ?",
             (limit,)
         )
         return [row[0] for row in self.cursor.fetchall()]
     
-    # ========== User Methods ==========
+    # User Methods
     def add_user(self, user_id: int, username: str, first_name: str = "", last_name: str = "", referrer_id: int = None):
         self.cursor.execute(
             "INSERT OR IGNORE INTO users (user_id, username, first_name, last_name, referrer_id) VALUES (?, ?, ?, ?, ?)",
@@ -381,7 +411,7 @@ class DatabaseManager:
         self.cursor.execute("SELECT COALESCE(SUM(total_referrals), 0) FROM referrals")
         return self.cursor.fetchone()[0]
     
-    # ========== Statistics ==========
+    # Statistics Methods
     def add_statistics(self, cycle: int, products: int, groups: int, messages: int, keywords: int):
         self.cursor.execute(
             "INSERT INTO bot_stats (cycle_number, products_found, groups_found, messages_sent, keywords_used) VALUES (?, ?, ?, ?, ?)",
@@ -396,96 +426,6 @@ class DatabaseManager:
     def close(self):
         if self.conn:
             self.conn.close()
-
-
-# ============================================
-# KEYWORD DISCOVERER (Auto Learn)
-# ============================================
-
-class KeywordDiscoverer:
-    def __init__(self, db: DatabaseManager, logger: 'Logger'):
-        self.db = db
-        self.logger = logger
-        
-        # Seed keywords (starting point)
-        self.seed_keywords = [
-            "shopping", "deals", "offers", "discount", "sale",
-            "electronics", "fashion", "mobile", "gadgets", 
-            "online shopping", "coupon", "cashback", "free shipping",
-            "trending", "bestseller", "new arrivals", "festival sale",
-            "diwali offers", "summer sale", "winter collection",
-            "affordable", "premium", "budget shopping"
-        ]
-    
-    def get_new_keywords_from_groups(self, group_titles: List[str]) -> List[str]:
-        """Extract potential new keywords from group titles"""
-        new_keywords = set()
-        
-        for title in group_titles:
-            # Extract words from title
-            words = re.findall(r'\b\w+\b', title.lower())
-            for word in words:
-                if len(word) > 3 and word not in self.seed_keywords:
-                    new_keywords.add(word)
-            
-            # Extract phrases (2-3 words)
-            phrases = re.findall(r'\b\w+\s+\w+\b', title.lower())
-            for phrase in phrases:
-                if len(phrase) > 5:
-                    new_keywords.add(phrase)
-        
-        return list(new_keywords)
-    
-    def get_new_keywords_from_searches(self, search_results: List[Dict]) -> List[str]:
-        """Extract keywords from search results"""
-        new_keywords = set()
-        
-        for result in search_results:
-            if 'keyword' in result:
-                related_words = result['keyword'].split()
-                for word in related_words:
-                    if len(word) > 3:
-                        new_keywords.add(word)
-        
-        return list(new_keywords)
-    
-    def get_smart_suggestions(self) -> List[str]:
-        """Generate smart keyword suggestions based on trends"""
-        suggestions = [
-            # Time-based keywords
-            f"{self.get_season()} sale",
-            f"{self.get_season()} offers",
-            "flash sale",
-            "limited period offer",
-            "today only",
-            "last chance",
-            "clearance sale",
-            
-            # Category-based
-            "best prices",
-            "lowest price guarantee",
-            "price drop",
-            "price alert",
-            
-            # Action-based
-            "grab the deal",
-            "shop now",
-            "limited stock",
-            "hurry up"
-        ]
-        return suggestions
-    
-    def get_season(self) -> str:
-        """Get current season for keyword suggestions"""
-        month = datetime.now().month
-        if month in [1, 2, 12]:
-            return "winter"
-        elif month in [3, 4, 5]:
-            return "summer"
-        elif month in [6, 7, 8, 9]:
-            return "monsoon"
-        else:
-            return "festival"
 
 
 # ============================================
@@ -566,7 +506,6 @@ class ProductFetcher:
                 soup = BeautifulSoup(html, 'html.parser')
                 
                 products = []
-                # Generic product detection
                 for element in soup.find_all(['div', 'article', 'li']):
                     if element.get('class') and any('product' in str(c).lower() for c in element.get('class', [])):
                         name_elem = element.find(['h3', 'h4', 'h2'])
@@ -596,11 +535,6 @@ class ProductFetcher:
             {"name": "Power Bank 20000mAh", "price": "₹899", "link": f"{self.config.website}/product/powerbank"},
             {"name": "Noise Cancelling Earbuds", "price": "₹1499", "link": f"{self.config.website}/product/earbuds"},
             {"name": "Bluetooth Speaker", "price": "₹1299", "link": f"{self.config.website}/product/speaker"},
-            {"name": "Phone Back Cover", "price": "₹199", "link": f"{self.config.website}/product/cover"},
-            {"name": "Fast Charging Cable", "price": "₹149", "link": f"{self.config.website}/product/cable"},
-            {"name": "Selfie Ring Light", "price": "₹399", "link": f"{self.config.website}/product/ringlight"},
-            {"name": "Gaming Mouse", "price": "₹599", "link": f"{self.config.website}/product/mouse"},
-            {"name": "Keyboard Combo", "price": "₹899", "link": f"{self.config.website}/product/keyboard"},
         ]
     
     async def get_new_products(self) -> List[Dict]:
@@ -623,7 +557,7 @@ class ProductFetcher:
 
 
 # ============================================
-# SMART GROUP SEARCHER (With Auto Keywords)
+# SMART GROUP SEARCHER
 # ============================================
 
 class SmartGroupSearcher:
@@ -632,10 +566,8 @@ class SmartGroupSearcher:
         self.db = db
         self.logger = logger
         self.config = config
-        self.keyword_discoverer = KeywordDiscoverer(db, logger)
     
     async def search_with_keywords(self, keywords: List[str]) -> List[Dict]:
-        """Search groups using multiple keywords"""
         found_groups = []
         
         for keyword in keywords:
@@ -668,36 +600,14 @@ class SmartGroupSearcher:
         return found_groups
     
     async def discover_and_search(self) -> Tuple[List[Dict], List[str]]:
-        """Discover new keywords and search with them"""
-        # Get untapped keywords from database
         untapped = self.db.get_untapped_keywords(25)
-        
-        # Get best performing keywords
         best = self.db.get_best_performing_keywords(10)
-        
-        # Get fresh keywords from discovery
-        fresh = self.keyword_discoverer.get_smart_suggestions()
-        
-        # Combine all sources
-        all_keywords = list(set(untapped + best + fresh + BASE_SEARCH_QUERIES))[:self.config.max_keywords]
+        all_keywords = list(set(untapped + best + BASE_SEARCH_QUERIES))[:self.config.max_keywords]
         
         self.logger.info(f"Searching with {len(all_keywords)} keywords")
-        
-        # Search with all keywords
         groups = await self.search_with_keywords(all_keywords)
         
         return groups, all_keywords
-    
-    async def extract_keywords_from_groups(self, groups: List[Dict]) -> List[str]:
-        """Extract potential new keywords from found groups"""
-        group_titles = [g['name'] for g in groups]
-        new_keywords = self.keyword_discoverer.get_new_keywords_from_groups(group_titles)
-        
-        # Add to database
-        for kw in new_keywords[:20]:
-            self.db.add_keyword(kw, "group_extraction")
-        
-        return new_keywords
 
 
 # ============================================
@@ -786,22 +696,13 @@ class BotHandlers:
         @self.client.on(events.NewMessage(pattern='/help'))
         async def help_handler(event):
             await self.handle_help(event)
-        
-        @self.client.on(events.NewMessage)
-        async def auto_reply_handler(event):
-            await self.handle_auto_reply(event)
     
     async def handle_start(self, event):
         user_id = event.sender_id
         username = event.sender.username or ""
         first_name = event.sender.first_name or ""
         
-        args = event.message.text.split()
-        referrer_id = None
-        if len(args) > 1 and args[1].isdigit():
-            referrer_id = int(args[1])
-        
-        self.db.add_user(user_id, username, first_name, "", referrer_id)
+        self.db.add_user(user_id, username, first_name, "")
         
         await event.reply(
             f"🛍️ Welcome to ApyKart, {first_name}! 🛍️\n\n"
@@ -836,7 +737,7 @@ class BotHandlers:
             f"👥 Total users: {users}\n"
             f"💬 Total messages: {messages}\n"
             f"🔄 Auto marketing: Active\n"
-            f"🔍 Auto keyword discovery: Active\n"
+            f"🔍 Auto discovery: Active\n"
             f"🌐 Website: {self.config.website}\n\n"
             f"⏰ Last update: {datetime.now().strftime('%H:%M:%S')}"
         )
@@ -892,25 +793,10 @@ class BotHandlers:
             f"Shop: {self.config.products_page}\n"
             f"App: {self.config.app_link}"
         )
-    
-    async def handle_auto_reply(self, event):
-        if not event.message.text:
-            return
-        
-        text = event.message.text.lower()
-        
-        if 'apykart' in text:
-            await event.reply(f"🛍️ ApyKart 🛍️\n\nShop: {self.config.products_page}\nApp: {self.config.app_link}\n🎁 Code: WELCOME20")
-        elif any(word in text for word in ['offer', 'discount', 'coupon', 'deal']):
-            await event.reply(f"🎉 Current Offers 🎉\n\n• 20% OFF: WELCOME20\n• Free Shipping on ₹499+\n• COD Available\n\n👉 {self.config.products_page}")
-        elif any(word in text for word in ['seller', 'vendor', 'sell']):
-            await event.reply(f"📦 Sell on ApyKart 📦\n\nFree Registration\nZero Commission (3 months)\n\n👉 {self.config.seller_link}")
-        elif any(word in text for word in ['app', 'download']):
-            await event.reply(f"📱 Download App 📱\n\n{self.config.app_link}\n\n✨ App Exclusive Offers")
 
 
 # ============================================
-# AUTO MARKETING ENGINE (Enhanced)
+# AUTO MARKETING ENGINE
 # ============================================
 
 class AutoMarketingEngine:
@@ -932,7 +818,6 @@ class AutoMarketingEngine:
         self.logger.info(f"🚀 STARTING CYCLE #{self.cycle}")
         self.logger.separator()
         
-        # Step 1: Fetch products
         self.logger.info("📦 Step 1: Fetching products...")
         products = await self.product_fetcher.get_new_products()
         
@@ -940,21 +825,14 @@ class AutoMarketingEngine:
             self.logger.warning("No new products found")
             return {'products': 0, 'groups': 0, 'messages': 0, 'keywords': 0}
         
-        # Step 2: Discover keywords and search groups
-        self.logger.info("🔍 Step 2: Discovering keywords & searching groups...")
+        self.logger.info("🔍 Step 2: Searching groups...")
         groups, keywords_used = await self.group_searcher.discover_and_search()
         self.logger.success(f"Found {len(groups)} new groups using {len(keywords_used)} keywords")
-        
-        # Step 3: Extract new keywords from found groups
-        if groups:
-            new_keywords = await self.group_searcher.extract_keywords_from_groups(groups)
-            self.logger.info(f"📝 Extracted {len(new_keywords)} potential new keywords")
         
         if not groups:
             self.logger.warning("No new groups found")
             return {'products': len(products), 'groups': 0, 'messages': 0, 'keywords': len(keywords_used)}
         
-        # Step 4: Send messages
         self.logger.info("📤 Step 3: Sending messages...")
         total_messages = 0
         
@@ -962,13 +840,11 @@ class AutoMarketingEngine:
             self.logger.info(f"  Sending: {product['name'][:40]}...")
             messages_sent = await self.message_sender.send_product_to_groups(product, groups)
             total_messages += messages_sent
-            
             self.db.add_sent_product(product['link'], product['name'], product['price'])
             
             if len(products) > 1:
                 await asyncio.sleep(60)
         
-        # Save statistics
         self.db.add_statistics(self.cycle, len(products), len(groups), total_messages, len(keywords_used))
         
         cycle_duration = (datetime.now() - cycle_start).seconds
@@ -985,7 +861,6 @@ class AutoMarketingEngine:
         self.logger.banner("🤖 APYKART FULLY AUTOMATED ENGINE v9.0")
         self.logger.info(f"🌐 Website: {self.config.website}")
         self.logger.info(f"🔄 Cycle interval: {self.config.cycle_hours} hours")
-        self.logger.info(f"🔍 Auto keyword discovery: ACTIVE")
         self.logger.info(f"📦 Max products per cycle: {self.config.max_products_per_cycle}")
         self.logger.separator()
         
@@ -1019,70 +894,6 @@ class AutoMarketingEngine:
 
 
 # ============================================
-# AUTO RESTART MANAGER
-# ============================================
-
-class AutoRestartManager:
-    def __init__(self, logger: Logger, config: Config):
-        self.logger = logger
-        self.config = config
-        self.is_running = True
-        self.last_restart = datetime.now()
-    
-    async def restart_bot(self):
-        self.logger.info("🔄 Auto-restarting bot...")
-        self.last_restart = datetime.now()
-        python = sys.executable
-        script = os.path.abspath(__file__)
-        os.execv(python, [python, script])
-    
-    async def monitor_and_restart(self):
-        self.logger.info("🔄 Auto-Restart Manager Started!")
-        self.logger.info(f"⏰ Restart every {self.config.auto_restart_hours} hours")
-        
-        while self.is_running:
-            try:
-                hours_since = (datetime.now() - self.last_restart).total_seconds() / 3600
-                if hours_since >= self.config.auto_restart_hours:
-                    await self.restart_bot()
-                    break
-                await asyncio.sleep(3600)
-            except Exception as e:
-                self.logger.error(f"Restart monitor error: {e}")
-                await asyncio.sleep(300)
-    
-    def stop(self):
-        self.is_running = False
-
-
-# ============================================
-# BACKGROUND SERVICE SETUP
-# ============================================
-
-def setup_background_service():
-    try:
-        termux_path = "/data/data/com.termux/files/usr/bin"
-        if os.path.exists(termux_path):
-            boot_dir = os.path.expanduser("~/.termux/boot")
-            os.makedirs(boot_dir, exist_ok=True)
-            
-            boot_script = f"""#!/data/data/com.termux/files/usr/bin/bash
-sleep 10
-cd ~
-nohup python3 apykart_ultimate_v9.py > bot.log 2>&1 &
-"""
-            boot_file = os.path.join(boot_dir, "start_apykart_bot")
-            with open(boot_file, "w") as f:
-                f.write(boot_script)
-            os.chmod(boot_file, 0o755)
-            print("✅ Background service configured")
-            return True
-    except Exception as e:
-        print(f"⚠️ Background service failed: {e}")
-        return False
-
-
-# ============================================
 # MAIN BOT CLASS
 # ============================================
 
@@ -1093,12 +904,18 @@ class ApyKartUltimateBot:
         self.db = DatabaseManager(config.db_path)
         self.client = None
         self.marketing_engine = None
-        self.restart_manager = None
         self.handlers = None
     
     async def start(self):
         self.logger.banner("🛍️ APYKART FULLY AUTOMATED BOT v9.0")
         self.logger.info("Auto Discovery | Auto Search | Auto Send | Auto Everything")
+        
+        # Check if credentials are set
+        if self.config.api_id == 0 or not self.config.api_hash or not self.config.bot_token:
+            self.logger.error("❌ API_ID, API_HASH, or BOT_TOKEN not set!")
+            self.logger.error("Please set these environment variables in Render Dashboard")
+            self.logger.info("Bot will keep web server running but Telegram features disabled")
+            return
         
         try:
             self.client = await TelegramClient(
@@ -1109,50 +926,23 @@ class ApyKartUltimateBot:
             self.logger.success(f"Bot Connected: @{(await self.client.get_me()).username}")
         except Exception as e:
             self.logger.error(f"Connection failed: {e}")
+            self.logger.error("Check your API_ID, API_HASH, and BOT_TOKEN")
             return
         
-        # Initialize components
         self.marketing_engine = AutoMarketingEngine(self.client, self.db, self.logger, self.config)
-        self.restart_manager = AutoRestartManager(self.logger, self.config)
         self.handlers = BotHandlers(self.client, self.db, self.logger, self.config)
         
-        # Start services
         asyncio.create_task(self.marketing_engine.run_forever())
-        asyncio.create_task(self.restart_manager.monitor_and_restart())
-        
-        if self.config.enable_background_service:
-            setup_background_service()
-            self.logger.info("📌 Background Service: CONFIGURED")
         
         self.logger.separator()
         self.logger.success("🤖 BOT IS FULLY OPERATIONAL!")
-        self.logger.info("📌 Features Active:")
-        self.logger.info("   ✅ Auto Keyword Discovery")
-        self.logger.info("   ✅ Smart Group Search")
-        self.logger.info("   ✅ Auto Product Fetch")
-        self.logger.info("   ✅ Auto Message Send")
-        self.logger.info("   ✅ Auto Restart (24h)")
-        self.logger.info("   ✅ Background Service")
         self.logger.separator()
-        
-        # Show current stats
-        stats = f"""
-📊 Current Statistics:
-├─ Groups Targeted: {self.db.get_total_groups()}
-├─ Products Sent: {self.db.get_total_products()}
-├─ Total Users: {self.db.get_total_users()}
-├─ Total Referrals: {self.db.get_total_referrals()}
-└─ Total Messages: {self.db.get_total_messages_sent()}
-"""
-        self.logger.info(stats)
         
         await self.client.run_until_disconnected()
     
     async def stop(self):
         if self.marketing_engine:
             self.marketing_engine.stop()
-        if self.restart_manager:
-            self.restart_manager.stop()
         if self.client:
             await self.client.disconnect()
         self.db.close()
